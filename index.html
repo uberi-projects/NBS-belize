@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>NbS Inventory for Belize</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/styles-info-panel.css" />
+    <script src="/static/js/helpers.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Leaflet Markers -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script>
+        let dataset = null;
+        const FILTER_TYPES = {
+            ONGOING: "filter_type_ongoing",
+            COMPLETED: "filter_type_completed",
+            NAME: "filter_type_name",
+            CHALLENGES: "filter_type_challenges",
+            ECOSYSTEMS: "filter_type_ecosystems"
+        };
+
+        function createExpandableSection(card, label, items) {
+            if (!items || items.length === 0) return;
+            var section = $('<div class="card-section"></div>');
+            var mainLine = $('<p class="summary-line"></p>').text(label + ": " + items[0]);
+            if (items.length > 1) {
+                var extraCount = items.length - 1;
+                var plusBtn = $('<span class="expand-btn"' + 'data-original="' + extraCount + '" style="cursor:pointer; color:blue; margin-left:5px;">(+' + extraCount + ')</span>');
+                var fullList = $('<ul class="full-list" style="display:none; margin: 5px 0 0 10px;"></ul>');
+                $.each(items, function (i, item) {
+                    fullList.append($('<li></li>').text(item));
+                });
+                plusBtn.on('click', function (e) {
+                    e.stopPropagation(); // Prevents bubbling if the card itself is clickable
+                    var willShow = !fullList.is(':visible');
+                    fullList.slideToggle();
+                    plusBtn.text(willShow ? '(-)' : '(+' + plusBtn.data('original') + ')');
+                });
+                mainLine.append(plusBtn);
+                section.append(mainLine, fullList);
+            } else {
+                section.append(mainLine);
+            }
+            $(card).append(section);
+        }
+
+        function createProjectCards(obj) {
+            var proj_card = document.createElement("div");
+            proj_card.setAttribute("id", "nbs_info_" + obj.project_id);
+            proj_card.setAttribute("class", "proj_card");
+            proj_card.setAttribute("data-original", obj.project_id);
+            proj_card.projectData = obj;
+            proj_card.addEventListener('click', function () {
+                var projectData = this.projectData;
+                showProjectInfo(projectData);
+                filterMarkersByProperty("project_id", projectData.project_id);
+                console.log(projectData);
+            });
+
+            var title_p = document.createElement("p");
+            title_p.innerHTML = "<strong>" + obj.title + "</strong>";
+            proj_card.appendChild(title_p);
+            document.getElementById("proj_card_display").appendChild(proj_card);
+
+            var proj_status = document.createElement("div");
+            var status_p = document.createElement("p");
+            status_p.textContent = "Status: " + obj.status;
+            proj_status.appendChild(status_p);
+            proj_card.appendChild(proj_status);
+
+            let eco_list = document.createElement("div");
+            eco_list.setAttribute("class", "summary-list")
+            obj.details?.ecosystemsTargeted.forEach(eco => {
+
+                let eco_mem = document.createElement("div");
+                eco_mem.innerText = eco;
+                eco_mem.setAttribute("class", "list-member")
+                eco_list.appendChild(eco_mem)
+                console.log(eco)
+
+            })
+
+            proj_card.appendChild(eco_list)
+        }
+
+        function showProjectInfo(projObj) {
+            checkRemoveElementById("proj_overlay_bg")
+            var proj_info_overlay_bg = document.createElement("div")
+            proj_info_overlay_bg.setAttribute("id", "proj_overlay_bg")
+            proj_info_overlay_bg.addEventListener('click', function () {
+                checkRemoveElementById("proj_overlay_bg");
+            });
+
+            var proj_info_overlay = document.createElement("div")
+            proj_info_overlay.setAttribute("class", "proj-overlay")
+            proj_info_overlay.setAttribute("id", "proj_overlay")
+            proj_info_overlay.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+
+            var info_pane = document.createElement("div")
+            info_pane.setAttribute("class", "info-pane")
+            info_pane.innerHTML = projectInfoTemplate(projObj)
+            proj_info_overlay.appendChild(info_pane)
+
+            var map_area = document.getElementById("leaflet_map_container");
+            map_area.appendChild(proj_info_overlay_bg)
+            proj_info_overlay_bg.appendChild(proj_info_overlay)
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            fetch('/static/data/nbs_projects.json')
+                .then(response => response.json())
+                .then(data => {
+                    dataset = data;
+                    data.forEach(value => createProjectCards(value));
+                })
+                .catch(error => console.error("Error fetching data:", error));
+        });
+
+
+        // This Section is for filtering the sidebar Cards===========================================
+        function renderCards(data) {
+            var proj_cards = document.getElementById("proj_card_display");
+            proj_cards.innerHTML = "";
+            Object.entries(data).forEach(([key, value]) => {
+                createProjectCards(value)
+            })
+        }
+        function reloadCards() {
+            renderCards(dataset)
+        }
+        // SOME WAY TO SIMPLIFY OR MERGE FILTER FUNCTIONS SO THERE ARENT SO MANY.
+        function filterCardsBySimpleProperty(propName, propFilter) {
+            renderCards(dataset.filter(project => project[propName] === propFilter))
+        }
+        // WORK IN PROGRESS ===========================
+        function filterCardsByDetailArrayProperty(propName, propFilter) {
+            renderCards(dataset.filter(project => project.details?.[propName]?.includes(propFilter)))
+        }
+        // ============================================
+        function filterCardsByStatus(status) { filterCardsBySimpleProperty("status", status) }
+        // WORK IN PROGRESS ===========================
+        function filterCardsByEcoTgt(ecosystem) { filterCardsByDetailArrayProperty("ecosystemsTargeted", ecosystem) }
+        // ============================================
+        function updateFilterOption(option) {
+            const pFilter = document.getElementById("p_filter");
+            const isStatusFilter = option === FILTER_TYPES.ONGOING || option === FILTER_TYPES.COMPLETED;
+
+            pFilter.classList.toggle("hidden-filter", isStatusFilter);
+            pFilter.value = ""
+
+            switch (option) {
+                case FILTER_TYPES.ONGOING:
+                    filterCardsByStatus("Ongoing");
+                    break;
+                case FILTER_TYPES.COMPLETED:
+                    filterCardsByStatus("Completed");
+                    break;
+                default:
+                    reloadCards()
+                    break;
+            }
+        }
+        function filterCardsByStringProperty(propName, propFilter) {
+            var proj_cards = document.getElementById("proj_card_display");
+            proj_cards.innerHTML = "";
+
+            const filtered_dataset = dataset.filter(project => project[propName]?.toLowerCase().includes(propFilter.toLowerCase()))
+            $.each(filtered_dataset, function (key, value) {
+                createProjectCards(value)
+            });
+        }
+        function filterCardsByStringArrayProperty(propName, propFilter) {
+            var proj_cards = document.getElementById("proj_card_display");
+            proj_cards.innerHTML = "";
+            const searchText = propFilter.trim().toLowerCase();
+
+            const filtered_dataset = dataset.filter(project => {
+                const arrayToSearch = project.details?.[propName] || [];
+                return arrayToSearch.some(item => item.toLowerCase().includes(searchText));
+            });
+            filtered_dataset.forEach(function (value) {
+                createProjectCards(value);
+            });
+
+        }
+        function updateFilterByString(text) {
+            if (text === "") {
+                reloadCards()
+                return;
+            }
+            const pFilterType = document.getElementById("p_filter_type").value;
+            const pFilterText = text.trim();
+            if (pFilterText === "") return;
+            if (pFilterType === FILTER_TYPES.NAME) {
+                filterCardsByStringProperty("title", pFilterText)
+            } else if (pFilterType === FILTER_TYPES.ECOSYSTEMS) {
+                filterCardsByStringArrayProperty("ecosystemsTargeted", pFilterText) // WIP MAKE SURE THIS WORKS
+            }
+            // Most Societal Challenges seem to be the same list so Filtering might be kinda useless======================
+            /*else if (pFilterType === FILTER_TYPES.CHALLENGES) {
+                filterCardsByStringArrayProperty("societalChallenges", pFilterText) // WIP MAKE SURE THIS WORKS
+            } */
+
+
+        }
+        // ==========================================================================================
+    </script>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2ecc71;
+            --accent-color: #e74c3c;
+            --bg-light: #f4f4f4;
+            --header: rgb(121, 166, 0, 1);
+
+            --text-light: #f4f4f4;
+            --text-dark: #2c3e50;
+            --header-bg-color: rgb(51, 157, 255);
+        }
+
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #proj_card_display {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            padding: 10px;
+            max-width: 350px;
+        }
+
+        .proj_card {
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 16px;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            border-left: 5px solid var(--primary-color);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .proj_card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .proj_card p {
+            margin: 0 0 8px 0;
+            color: #333333;
+        }
+
+        .proj_card strong {
+            font-size: 1.1em;
+            color: #2c3e50;
+        }
+
+        .summary-list {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .list-member {
+            white-space: nowrap;
+            border-radius: 10px;
+            margin: 5px;
+            padding: 3px;
+            background-color: #f8f9fa;
+        }
+
+        .card-section {
+            font-size: 0.9em;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 8px;
+        }
+
+        .summary-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .expand-btn {
+            font-weight: bold;
+            background: #e8f4fd;
+            color: #007bff !important;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            transition: background 0.2s;
+        }
+
+        .expand-btn:hover {
+            background: #d0e7ff;
+        }
+
+        .full-list {
+            color: #555555;
+            padding-left: 20px !important;
+        }
+
+        .full-list li {
+            margin-bottom: 4px;
+        }
+
+        #map {
+            height: inherit;
+        }
+
+        /*Header Bar Styles*/
+        .header-bar-container {
+            height: 7vh;
+            width: 100vw;
+            margin: 0;
+            background-color: rgb(123, 45, 145);
+            color: white;
+        }
+
+        .header-bar-block {
+            margin: 0px 20px;
+        }
+
+        /*Helpers*/
+        .hidden-filter {
+            display: none;
+        }
+    </style>
+</head>
+
+<body style="width: 100%; margin: 0;">
+    <div class="header-bar-container">
+        <div class="header-bar" style="display: flex;">
+            <div class="header-bar-block">
+                <H2 style="margin: 0; padding: 10px; color: white;">NbS Project Database</H2>
+            </div>
+
+            <div class="header-bar-block" style="display: flex; align-items: center;justify-content: center;">
+                <div style="align-self: center;">
+                    <label style="margin: 0; padding: 10px; color: white;" for="p_filter_type">Search Projects
+                        by</label>
+                    <select name="p_filter_type" id="p_filter_type" onchange="updateFilterOption(this.value)">
+                        <option value="filter_type_name">Name</option>
+                        <option value="filter_type_ongoing">Ongoing</option>
+                        <option value="filter_type_completed">Completed</option>
+                        <option value="filter_type_ecosystems">Eosystems Targeted</option>
+                        <!--<option value="filter_type_challenges">Societal Challenges</option>-->
+                    </select>
+                    <input type="text" id="p_filter" name="p_filter" list="filter_options"
+                        onkeyup="updateFilterByString(this.value)">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="height:93vh; width: 100vw; display: flex;">
+        <div style="margin: 0; padding:0; height: 100%;flex: 1; overflow-y:scroll">
+            <div id="proj_card_display"></div>
+        </div>
+        <div id="leaflet_map_container" style="margin: 0; padding:0; height: 100%;flex: 4; position: relative">
+            <div id="map"></div>
+        </div>
+
+    </div>
+    <script>
+        var map = L.map("map").setView([17.097111994309312, -88.71966058916018], 8);
+        var markers;
+        var geoJsonData;
+        fetch("/static/data/NbS_locations.geojson")
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error("Network response was not ok");
+                }
+                return response.json();
+            })
+            .then((data) => {
+                geoJsonData = data;
+                loadDefaultMap();
+            })
+            .catch((error) => console.error("Error loading GeoJSON:", error));
+
+        // Adds all markers from geoJsonData to the map.
+        function loadDefaultMap() {
+            markers = L.markerClusterGroup({
+                disableClusteringAtZoom: 15,
+                showCoverageOnHover: false
+            });
+            var geoJsonLayer = L.geoJSON(geoJsonData, {
+                onEachFeature: function (feature, layer) {
+                    layer.bindPopup('<p>' + feature.properties.project_title + ' ' + feature.properties.district + ' ' + feature.properties.location + '</p>');
+                }
+            });
+            markers.addLayer(geoJsonLayer);
+            map.addLayer(markers);
+        }
+        // Clears the markers from the Map and then re-adds all markers from geoJsonData to the map.
+        function refreshMap() {
+            markers.clearLayers();
+            loadDefaultMap();
+        }
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 14,
+            attribution:
+                '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        }).addTo(map);
+
+        // Clears the markers from the Map and then adds only those that match the specified values proided
+        function filterMarkersByProperty(propName, propVal) {
+            markers.clearLayers();
+            markers = L.markerClusterGroup({
+                disableClusteringAtZoom: 15,
+                showCoverageOnHover: false
+            });
+            var geoJsonLayer = L.geoJSON(geoJsonData, {
+                filter: function (feature) {
+                    return feature.properties[propName].toString().toLowerCase() === propVal.toString().toLowerCase();
+                },
+                onEachFeature: function (feature, layer) {
+
+                    layer.bindPopup('<p>' + feature.properties.project_title + ' ' + feature.properties.district + ' ' + feature.properties.location + '</p>');
+                }
+            });
+            markers.addLayer(geoJsonLayer);
+            map.addLayer(markers);
+        }
+
+    </script>
+</body>
+
+</html>
