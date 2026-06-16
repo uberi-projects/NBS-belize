@@ -3,23 +3,26 @@
 
 <head>
     <title>NbS Inventory for Belize</title>
-    <link rel="stylesheet" href="/static/css/styles.css" />
     <link rel="stylesheet" href="/static/css/styles-info-panel.css" />
     <script src="/static/js/helpers.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-
     <!-- Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
     <!-- Leaflet Markers -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
     <script>
-        let dataset = null;
+        let dataset = [];
+        let markers;
+        let geojson_features = {};
+        let project_count = 0;
+
+
         const FILTER_TYPES = {
             ONGOING: "filter_type_ongoing",
             COMPLETED: "filter_type_completed",
@@ -27,6 +30,145 @@
             CHALLENGES: "filter_type_challenges",
             ECOSYSTEMS: "filter_type_ecosystems"
         };
+
+        // Helper to fech local files
+        function fetchFile(filename) {
+            return fetch("/static/data/" + filename)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error("Network response was not ok");
+                    }
+                    return response.text();
+                })
+                .catch((error) => console.error("Error loading GeoJSON:", error));
+        }
+
+        // Converts the CSV text data into a JSON array.
+        function parseCSVtoJSON(csv_text) {
+            const lines = csv_text.trim().split("\n"); // Separate CSV by line into an array.
+            const dataLines = lines.slice(1); // Skip csv header row
+            project_count = dataLines.length;
+
+            // Return all processed Lines
+            return dataLines.map((line, index) => {
+                let pieces = [];
+                let currentPiece = "";
+                let insideQuotes = false;
+
+                // Loops over each char to split commas while ignoring commas inside quotes.
+                for (let i = 0; i < line.length; i++) {
+                    let char = line[i];
+                    let nextChar = line[i + 1];
+
+                    if (char === '"') {
+                        if (insideQuotes && nextChar === '"') {
+                            currentPiece += '"';
+                            i++;
+                        } else {
+                            insideQuotes = !insideQuotes;
+                        }
+                    } else if (char === ',' && !insideQuotes) {
+                        pieces.push(currentPiece.trim());
+                        currentPiece = "";
+                    } else {
+                        currentPiece += char;
+                    }
+                }
+                pieces.push(currentPiece.trim());
+
+                // Helper function to turn comma-separated strings into clean arrays
+                // If string exists, split,trim and remove empty items, else return empty array
+                const splitToArray = (str) => str ? str.split(",").map(item => item.trim().replace(/[\r\n]+/g, "")).filter(Boolean) : [];
+
+                // Build JSON object using the processed CSV pieces
+                return {
+                    project_id: `P${String(index + 1).padStart(4, '0')}`, // Dynamically generates the project ID;  P0001, P0002, ... used later to map points on the map.
+                    title: pieces[0],
+                    implementationEntity: splitToArray(pieces[4]),
+                    status: pieces[1],
+                    timeline: {
+                        from: pieces[2] || "",
+                        to: pieces[3] || ""
+                    },
+                    locations: {
+                        corozal: splitToArray(pieces[13]),
+                        orangeWalk: splitToArray(pieces[14]),
+                        belize: splitToArray(pieces[15]),
+                        cayo: splitToArray(pieces[16]),
+                        stannCreek: splitToArray(pieces[17]),
+                        toledo: splitToArray(pieces[18])
+                    },
+                    details: {
+                        societalChallenges: pieces[7] ? JSON.parse(pieces[7]) : [],
+                        ecosystemsTargeted: splitToArray(pieces[8]),
+                        servicesEnhanced: pieces[9] || "",
+                        beneficiaries: pieces[5] || "",
+                        description: pieces[6] || "",
+                        climate_risks: pieces[10] || "",
+                        biodiversity_risks: pieces[11] || "",
+                        references: splitToArray(pieces[12])
+                    }
+                };
+                //console.log(JSON.stringify(obj, null, 2));
+            });
+        }
+
+        function createProjectCards(obj, fragment) {
+            var proj_card = document.createElement("div");
+            proj_card.setAttribute("id", "nbs_info_" + obj.project_id);
+            proj_card.setAttribute("class", "proj_card");
+            proj_card.setAttribute("data-original", obj.project_id);
+            //proj_card.projectData = obj; // Stores the project info object as a hidden property to be used by other functions
+            proj_card.addEventListener('click', function () {
+                var projectData = this.projectData;
+                showProjectInfo(obj);
+                filterMarkersByProperty("project_id", obj.project_id);
+                //console.log(obj);
+            });
+
+            var title_p = document.createElement("p");
+            title_p.innerHTML = "<strong>" + obj.title + "</strong>";
+            proj_card.appendChild(title_p);
+
+            var proj_status = document.createElement("div");
+            var status_p = document.createElement("p");
+            status_p.textContent = "Status: " + obj.status;
+            proj_status.appendChild(status_p);
+            proj_card.appendChild(proj_status);
+
+            let eco_list = document.createElement("div");
+            eco_list.setAttribute("class", "summary-list")
+            obj.details?.ecosystemsTargeted.forEach(eco => {
+
+                let eco_mem = document.createElement("div");
+                eco_mem.innerText = eco;
+                eco_mem.setAttribute("class", "list-member")
+                eco_list.appendChild(eco_mem)
+            })
+            proj_card.appendChild(eco_list)
+
+            let chall_list = document.createElement("div");
+            chall_list.setAttribute("class", "summary-list")
+            obj.details?.societalChallenges.forEach(chall => {
+
+                let chall_mem = document.createElement("div");
+                chall_mem.innerText = chall;
+                chall_mem.setAttribute("class", "list-member")
+                chall_list.appendChild(chall_mem)
+            })
+            proj_card.appendChild(chall_list)
+
+            fragment.appendChild(proj_card);
+        }
+
+        // Fetch location_coordinates.csv and map it to a JSON array
+        function buildProjectCardSideBar() {
+            return fetchFile("NbS_submissions_clean.csv").then((data) => {
+                dataset = parseCSVtoJSON(data).filter(Boolean);
+                renderCards(dataset);
+                document.getElementById("project_count_block").textContent = project_count + " Projects recorded"
+            })
+        }
 
         function createExpandableSection(card, label, items) {
             if (!items || items.length === 0) return;
@@ -51,45 +193,6 @@
                 section.append(mainLine);
             }
             $(card).append(section);
-        }
-
-        function createProjectCards(obj) {
-            var proj_card = document.createElement("div");
-            proj_card.setAttribute("id", "nbs_info_" + obj.project_id);
-            proj_card.setAttribute("class", "proj_card");
-            proj_card.setAttribute("data-original", obj.project_id);
-            proj_card.projectData = obj;
-            proj_card.addEventListener('click', function () {
-                var projectData = this.projectData;
-                showProjectInfo(projectData);
-                filterMarkersByProperty("project_id", projectData.project_id);
-                console.log(projectData);
-            });
-
-            var title_p = document.createElement("p");
-            title_p.innerHTML = "<strong>" + obj.title + "</strong>";
-            proj_card.appendChild(title_p);
-            document.getElementById("proj_card_display").appendChild(proj_card);
-
-            var proj_status = document.createElement("div");
-            var status_p = document.createElement("p");
-            status_p.textContent = "Status: " + obj.status;
-            proj_status.appendChild(status_p);
-            proj_card.appendChild(proj_status);
-
-            let eco_list = document.createElement("div");
-            eco_list.setAttribute("class", "summary-list")
-            obj.details?.ecosystemsTargeted.forEach(eco => {
-
-                let eco_mem = document.createElement("div");
-                eco_mem.innerText = eco;
-                eco_mem.setAttribute("class", "list-member")
-                eco_list.appendChild(eco_mem)
-                console.log(eco)
-
-            })
-
-            proj_card.appendChild(eco_list)
         }
 
         function showProjectInfo(projObj) {
@@ -117,106 +220,139 @@
             proj_info_overlay_bg.appendChild(proj_info_overlay)
         }
 
-        document.addEventListener('DOMContentLoaded', function () {
-            fetch('/static/data/nbs_projects.json')
-                .then(response => response.json())
-                .then(data => {
-                    dataset = data;
-                    data.forEach(value => createProjectCards(value));
-                })
-                .catch(error => console.error("Error fetching data:", error));
-        });
-
-
         // This Section is for filtering the sidebar Cards===========================================
         function renderCards(data) {
             var proj_cards = document.getElementById("proj_card_display");
             proj_cards.innerHTML = "";
-            Object.entries(data).forEach(([key, value]) => {
-                createProjectCards(value)
-            })
+            const fragment = document.createDocumentFragment();
+            data.forEach(project => createProjectCards(project, fragment))
+            document.getElementById("proj_card_display").appendChild(fragment);
+            // Hides the loader once all the cards are made
+            $("#sidebar_loader").fadeOut("slow");
+            document.getElementById("sidebar_container").style.overflowY = "scroll";
         }
         function reloadCards() {
             renderCards(dataset)
         }
-        // SOME WAY TO SIMPLIFY OR MERGE FILTER FUNCTIONS SO THERE ARENT SO MANY.
-        function filterCardsBySimpleProperty(propName, propFilter) {
-            renderCards(dataset.filter(project => project[propName] === propFilter))
+
+        function getFilteredDataset(type, textValue) {
+            if (!textValue || textValue.trim() === "") return dataset;
+
+            const search = textValue.trim().toLowerCase();
+
+            return dataset.filter(project => {
+                switch (type) {
+                    case FILTER_TYPES.ONGOING:
+                        return project.status === "Ongoing";
+                    case FILTER_TYPES.COMPLETED:
+                        return project.status === "Completed";
+                    case FILTER_TYPES.NAME:
+                        return project.title?.toLowerCase().includes(search);
+                    case FILTER_TYPES.ECOSYSTEMS:
+                        return (project.details?.ecosystemsTargeted || []).some(item => item.toLowerCase().includes(search));
+                    case FILTER_TYPES.CHALLENGES:
+                        return (project.details?.societalChallenges || []).some(item => item.toLowerCase().includes(search));
+                    default:
+                        return true;
+                }
+            });
         }
-        // WORK IN PROGRESS ===========================
-        function filterCardsByDetailArrayProperty(propName, propFilter) {
-            renderCards(dataset.filter(project => project.details?.[propName]?.includes(propFilter)))
-        }
-        // ============================================
-        function filterCardsByStatus(status) { filterCardsBySimpleProperty("status", status) }
-        // WORK IN PROGRESS ===========================
-        function filterCardsByEcoTgt(ecosystem) { filterCardsByDetailArrayProperty("ecosystemsTargeted", ecosystem) }
-        // ============================================
+
         function updateFilterOption(option) {
             const pFilter = document.getElementById("p_filter");
             const isStatusFilter = option === FILTER_TYPES.ONGOING || option === FILTER_TYPES.COMPLETED;
 
             pFilter.classList.toggle("hidden-filter", isStatusFilter);
-            pFilter.value = ""
+            pFilter.value = "";
 
-            switch (option) {
-                case FILTER_TYPES.ONGOING:
-                    filterCardsByStatus("Ongoing");
-                    break;
-                case FILTER_TYPES.COMPLETED:
-                    filterCardsByStatus("Completed");
-                    break;
-                default:
-                    reloadCards()
-                    break;
-            }
+            const results = getFilteredDataset(option, isStatusFilter ? "status_mode" : "");
+            renderCards(results);
         }
-        function filterCardsByStringProperty(propName, propFilter) {
-            var proj_cards = document.getElementById("proj_card_display");
-            proj_cards.innerHTML = "";
 
-            const filtered_dataset = dataset.filter(project => project[propName]?.toLowerCase().includes(propFilter.toLowerCase()))
-            $.each(filtered_dataset, function (key, value) {
-                createProjectCards(value)
-            });
-        }
-        function filterCardsByStringArrayProperty(propName, propFilter) {
-            var proj_cards = document.getElementById("proj_card_display");
-            proj_cards.innerHTML = "";
-            const searchText = propFilter.trim().toLowerCase();
-
-            const filtered_dataset = dataset.filter(project => {
-                const arrayToSearch = project.details?.[propName] || [];
-                return arrayToSearch.some(item => item.toLowerCase().includes(searchText));
-            });
-            filtered_dataset.forEach(function (value) {
-                createProjectCards(value);
-            });
-
-        }
         function updateFilterByString(text) {
-            if (text === "") {
-                reloadCards()
-                return;
-            }
             const pFilterType = document.getElementById("p_filter_type").value;
-            const pFilterText = text.trim();
-            if (pFilterText === "") return;
-            if (pFilterType === FILTER_TYPES.NAME) {
-                filterCardsByStringProperty("title", pFilterText)
-            } else if (pFilterType === FILTER_TYPES.ECOSYSTEMS) {
-                filterCardsByStringArrayProperty("ecosystemsTargeted", pFilterText) // WIP MAKE SURE THIS WORKS
-            }
-            // Most Societal Challenges seem to be the same list so Filtering might be kinda useless======================
-            /*else if (pFilterType === FILTER_TYPES.CHALLENGES) {
-                filterCardsByStringArrayProperty("societalChallenges", pFilterText) // WIP MAKE SURE THIS WORKS
-            } */
-
-
+            const results = getFilteredDataset(pFilterType, text);
+            renderCards(results);
         }
-        // ==========================================================================================
+
+        // Fetch location_coordinates.csv and map it to a JSON array
+        const clean_exclusions = ["corozal town"]
+        function buildGeoJSON() {
+            return fetchFile("location_coordinates.csv").then((data) => {
+                const lines = data.trim().split("\n");
+                const coord_dict = {};
+                // Loop through each line of the CSV file
+                lines.slice(1).forEach(line => {
+                    const values = line.split(",");
+                    if (values.length < 4) return; // Skip broken rows
+                    const district = values[0].trim().toLowerCase();
+                    const locationName = values[1].trim();
+                    const lat = parseFloat(values[2]);
+                    const long = parseFloat(values[3]);
+                    // If coordinates are valid numbers and not zeros, save them
+                    // This will remove any location that has 0,0 for latlong in location_coordinates.csv
+                    if (!isNaN(lat) && !isNaN(long) && (lat !== 0 || long !== 0)) {
+                        const lower_loc = locationName.toLowerCase();
+                        let lookup_Key;
+                        // exclusion check and key creation
+                        if (clean_exclusions.some(ex => lower_loc.includes(ex))) {
+                            lookup_Key = `${district.replace(/[^a-z0-9]/g, '')}_${lower_loc.replace(/[^a-z0-9]/g, '')}`;
+                        } else {
+                            // Normal cleanup rules for everything else
+                            const cleanLoc = lower_loc.replace(/\s+village\s*|\s+town\s*/g, '').replace(/[^a-z0-9]/g, '');
+                            lookup_Key = `${district.replace(/[^a-z0-9]/g, '')}_${cleanLoc}`;
+                        }
+                        coord_dict[lookup_Key] = { lat, long, originalName: locationName };
+                    }
+                });
+                // Loop through loaded project list
+                const features = [];
+                dataset.forEach(project => {
+                    // Loop through each district inside the current project's location list
+                    Object.entries(project.locations).forEach(([district, locations]) => {
+                        const cleanDistKey = district.toLowerCase();
+                        // Loop through every location name inside that district
+                        locations.forEach(locName => {
+                            const lower_loc = locName.toLowerCase();
+                            let clean_loc_key;
+
+                            // exclusion check and key lookup
+                            if (clean_exclusions.some(ex => lower_loc.includes(ex))) {
+                                clean_loc_key = lower_loc.replace(/[^a-z0-9]/g, '');
+                            } else {
+                                clean_loc_key = lower_loc.replace(/\s+village\s*|\s+town\s*/g, '').replace(/[^a-z0-9]/g, '');
+                            }
+
+                            const match = coord_dict[`${cleanDistKey}_${clean_loc_key}`];
+                            // If match found, build the map marker object
+                            if (match) {
+                                features.push({
+                                    type: "Feature",
+                                    geometry: { type: "Point", coordinates: [match.long, match.lat] },
+                                    properties: {
+                                        project_id: project.project_id,
+                                        district: district,
+                                        location: match.originalName,
+                                        project_title: project.title,
+                                    }
+                                });
+                            }
+                        });
+                    });
+                });
+                geojson_features.features = features;
+                loadDefaultMap();
+            });
+        }
+
+        function initData() {
+            buildProjectCardSideBar().then(() => {
+                buildGeoJSON()
+            })
+        }
     </script>
     <style>
+        /*root colors need to be cleaned up*/
         :root {
             --primary-color: #3498db;
             --secondary-color: #2ecc71;
@@ -227,12 +363,49 @@
             --text-light: #f4f4f4;
             --text-dark: #2c3e50;
             --header-bg-color: rgb(51, 157, 255);
+            --eri-purple: rgb(123, 45, 145);
         }
 
         body {
             font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         }
 
+        /*Sidebar Loader*/
+        .sidebar-overlay {
+            position: relative;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--eri-purple);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /*Project Cards*/
         #proj_card_display {
             display: flex;
             flex-direction: column;
@@ -287,36 +460,6 @@
             margin-top: 8px;
         }
 
-        .summary-line {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-weight: 500;
-        }
-
-        .expand-btn {
-            font-weight: bold;
-            background: #e8f4fd;
-            color: #007bff !important;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            transition: background 0.2s;
-        }
-
-        .expand-btn:hover {
-            background: #d0e7ff;
-        }
-
-        .full-list {
-            color: #555555;
-            padding-left: 20px !important;
-        }
-
-        .full-list li {
-            margin-bottom: 4px;
-        }
-
         #map {
             height: inherit;
         }
@@ -341,7 +484,7 @@
     </style>
 </head>
 
-<body style="width: 100%; margin: 0;">
+<body style="width: 100%; margin: 0;" onload="initData()">
     <div class="header-bar-container">
         <div class="header-bar" style="display: flex;">
             <div class="header-bar-block">
@@ -356,49 +499,48 @@
                         <option value="filter_type_name">Name</option>
                         <option value="filter_type_ongoing">Ongoing</option>
                         <option value="filter_type_completed">Completed</option>
-                        <option value="filter_type_ecosystems">Eosystems Targeted</option>
-                        <!--<option value="filter_type_challenges">Societal Challenges</option>-->
+                        <option value="filter_type_ecosystems">Eosystem Targeted</option>
+                        <option value="filter_type_challenges">Societal Challenge</option>
                     </select>
                     <input type="text" id="p_filter" name="p_filter" list="filter_options"
                         onkeyup="updateFilterByString(this.value)">
                 </div>
             </div>
+            <div class="header-bar-block">
+                <H2 style="margin: 0; padding: 10px; color: white;" id="project_count_block">0 ammount of projects</H2>
+            </div>
         </div>
     </div>
-
     <div style="height:93vh; width: 100vw; display: flex;">
-        <div style="margin: 0; padding:0; height: 100%;flex: 1; overflow-y:scroll">
+
+        <div id="sidebar_container" style="margin: 0; padding:0; height: 100%;flex: 1; overflow-y:hidden">
+            <div id="sidebar_loader" class="sidebar-overlay">
+                <div class="loader"></div>
+            </div>
             <div id="proj_card_display"></div>
         </div>
+
         <div id="leaflet_map_container" style="margin: 0; padding:0; height: 100%;flex: 4; position: relative">
             <div id="map"></div>
         </div>
-
     </div>
+    <!--Script for loading the map and its markers-->
     <script>
         var map = L.map("map").setView([17.097111994309312, -88.71966058916018], 8);
-        var markers;
-        var geoJsonData;
-        fetch("/static/data/NbS_locations.geojson")
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error("Network response was not ok");
-                }
-                return response.json();
-            })
-            .then((data) => {
-                geoJsonData = data;
-                loadDefaultMap();
-            })
-            .catch((error) => console.error("Error loading GeoJSON:", error));
 
-        // Adds all markers from geoJsonData to the map.
+        map.on('click', function (e) {
+            var lat = e.latlng.lat;
+            var lng = e.latlng.lng;
+            console.log("Latitude: " + lat + ", Longitude: " + lng);
+        });
+
+        // Adds all markers from geojson_features to the map.
         function loadDefaultMap() {
             markers = L.markerClusterGroup({
                 disableClusteringAtZoom: 15,
                 showCoverageOnHover: false
             });
-            var geoJsonLayer = L.geoJSON(geoJsonData, {
+            var geoJsonLayer = L.geoJSON(geojson_features, {
                 onEachFeature: function (feature, layer) {
                     layer.bindPopup('<p>' + feature.properties.project_title + ' ' + feature.properties.district + ' ' + feature.properties.location + '</p>');
                 }
@@ -406,7 +548,7 @@
             markers.addLayer(geoJsonLayer);
             map.addLayer(markers);
         }
-        // Clears the markers from the Map and then re-adds all markers from geoJsonData to the map.
+        // Clears the markers from the Map and then re-adds all markers from geojson_features to the map.
         function refreshMap() {
             markers.clearLayers();
             loadDefaultMap();
@@ -424,12 +566,11 @@
                 disableClusteringAtZoom: 15,
                 showCoverageOnHover: false
             });
-            var geoJsonLayer = L.geoJSON(geoJsonData, {
+            var geoJsonLayer = L.geoJSON(geojson_features, {
                 filter: function (feature) {
                     return feature.properties[propName].toString().toLowerCase() === propVal.toString().toLowerCase();
                 },
                 onEachFeature: function (feature, layer) {
-
                     layer.bindPopup('<p>' + feature.properties.project_title + ' ' + feature.properties.district + ' ' + feature.properties.location + '</p>');
                 }
             });
