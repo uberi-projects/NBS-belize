@@ -3,8 +3,8 @@
 
 <head>
     <title>NbS Inventory for Belize</title>
-    <link rel="stylesheet" href="/static/css/styles-info-panel.css" />
-    <script src="/static/js/helpers.js"></script>
+    <link rel="stylesheet" href="./static/css/styles-info-panel.css" />
+    <script src="./static/js/helpers.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <!-- Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -33,9 +33,9 @@
 
         const clean_exclusions = ["corozal town"]
 
-        // Helper to fech local files
+        // Helper to fetch local files
         function fetchFile(filename) {
-            return fetch("/static/data/" + filename)
+            return fetch("./static/data/" + filename)
                 .then((response) => {
                     if (!response.ok) {
                         throw new Error("Network response was not ok");
