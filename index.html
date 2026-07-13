@@ -261,9 +261,11 @@
                     "<strong>" + text_data[15] + "</strong>" +
                     "<p>" + text_data[16] + "</p>" +
                     "<br>" +
-                    "<p>" + text_data[17] + "</p>" +
-                    "<br>" +
-                    "<p>" + text_data[18] + "</p>" +
+                    "<p>" + text_data[17] + "</p>" 
+                
+                    //Take out table for now as the numbers are not dynamicaly calculated
+                    //"<br>"+
+                    /*"<p>" + text_data[18] + "</p>" +
                     "<table>" +
                     "<tr><th>District</th><th>Project Count</th></tr>";
 
@@ -274,7 +276,7 @@
                     }
                 }
 
-                html += "</table></div>";
+                html += "</table></div>";*/
 
                 makeOverlayWindow(html);
             });
@@ -655,6 +657,14 @@
             <div class="header-bar-block " style="margin-right: 20px; cursor:pointer">
                 <strong id="about_inventory_text">About Inventory</strong>
             </div>
+
+            <div class="header-bar-block " style="align-items: center; height: inherit;">
+                <a href="https://www.uberibz.org/" target="_blank"
+                    style="height: inherit; display: flex; align-items: center; text-decoration: none;">
+                    <img style="height: 90%;" src="./static/img/logo/UB ERI Color PNG Image.png" alt="UBERI Logo">
+                </a>
+            </div>
+            
         </div>
     </div>
     <div style="height:90vh; width: 100vw; display: flex;">
